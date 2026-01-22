@@ -9,6 +9,7 @@ import structlog
 
 from posthog.clickhouse.client import sync_execute
 from posthog.clickhouse.client.connection import Workload
+from posthog.clickhouse.query_tagging import tags_context
 from posthog.models import Dashboard, Insight, OrganizationMembership, Team
 
 logger = structlog.get_logger(__name__)
@@ -207,12 +208,13 @@ def get_teams_with_usage_signals_in_period(
         GROUP BY team_id
     """
 
-    results = sync_execute(
-        query,
-        {"team_ids": team_ids, "begin": begin, "end": end},
-        workload=Workload.OFFLINE,
-        settings=CH_BILLING_SETTINGS,
-    )
+    with tags_context(usage_report="salesforce_usage_signals"):
+        results = sync_execute(
+            query,
+            {"team_ids": team_ids, "begin": begin, "end": end},
+            workload=Workload.OFFLINE,
+            settings=CH_BILLING_SETTINGS,
+        )
 
     return [
         TeamUsageSignals(
@@ -252,12 +254,13 @@ def get_teams_with_recordings_in_period(begin: datetime, end: datetime, team_ids
         HAVING count > 0
     """
 
-    results = sync_execute(
-        query,
-        {"team_ids": team_ids, "previous_begin": previous_begin, "begin": begin, "end": end},
-        workload=Workload.OFFLINE,
-        settings=CH_BILLING_SETTINGS,
-    )
+    with tags_context(usage_report="salesforce_recordings_signals"):
+        results = sync_execute(
+            query,
+            {"team_ids": team_ids, "previous_begin": previous_begin, "begin": begin, "end": end},
+            workload=Workload.OFFLINE,
+            settings=CH_BILLING_SETTINGS,
+        )
 
     return {row[0]: row[1] for row in results}
 
