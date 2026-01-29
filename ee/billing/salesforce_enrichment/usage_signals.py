@@ -14,7 +14,11 @@ from posthog.models import Dashboard, Insight, OrganizationMembership, Team
 
 logger = structlog.get_logger(__name__)
 
-CH_BILLING_SETTINGS = {"max_execution_time": 5 * 60}
+CH_BILLING_SETTINGS = {
+    "max_execution_time": 5 * 60,
+    # Allow spilling to disk if memory is exceeded during GROUP BY
+    "max_bytes_before_external_group_by": 50_000_000_000,  # 50GB
+}
 
 # Mapping of product attribute names to their output names
 PRODUCT_FLAGS = {
@@ -190,12 +194,14 @@ def get_teams_with_usage_signals_in_period(
     if not team_ids:
         return []
 
+    # Use uniq() instead of count(distinct ...) for memory efficiency.
+    # uniq() uses HyperLogLog which is approximate but typically within 2% accuracy.
     query = """
         SELECT
             team_id,
-            count(distinct person_id) as active_persons,
-            count(distinct distinct_id) as active_distinct_ids,
-            count(distinct `$session_id`) as session_count,
+            uniq(person_id) as active_persons,
+            uniq(distinct_id) as active_distinct_ids,
+            uniq(`$session_id`) as session_count,
             count() as total_events,
             countIf(event = 'decide usage') > 0
                 OR countIf(event = 'local evaluation usage') > 0 as has_feature_flags,
@@ -203,8 +209,8 @@ def get_teams_with_usage_signals_in_period(
             countIf(event = '$exception') > 0 as has_error_tracking,
             countIf(event IN ('$ai_generation', '$ai_trace')) > 0 as has_ai
         FROM events
-        WHERE team_id IN %(team_ids)s
-          AND timestamp >= %(begin)s AND timestamp < %(end)s
+        PREWHERE team_id IN %(team_ids)s
+        WHERE timestamp >= %(begin)s AND timestamp < %(end)s
         GROUP BY team_id
     """
 
@@ -243,17 +249,19 @@ def get_teams_with_recordings_in_period(begin: datetime, end: datetime, team_ids
 
     # Aggregate all sessions from previous_begin to end, then filter to those
     # whose first timestamp is within the target period. This avoids NOT IN subquery.
+    # PREWHERE on team_id filters early before reading larger columns.
+    # The timestamp filter is pushed into the inner HAVING to reduce rows passed to outer query.
     query = """
-        SELECT team_id, countIf(first_ts >= %(begin)s AND first_ts < %(end)s) as count
+        SELECT team_id, count() as count
         FROM (
             SELECT team_id, session_id, min(min_first_timestamp) as first_ts
             FROM session_replay_events
-            WHERE team_id IN %(team_ids)s
-              AND min_first_timestamp >= %(previous_begin)s AND min_first_timestamp < %(end)s
+            PREWHERE team_id IN %(team_ids)s
+            WHERE min_first_timestamp >= %(previous_begin)s AND min_first_timestamp < %(end)s
             GROUP BY team_id, session_id
+            HAVING first_ts >= %(begin)s AND first_ts < %(end)s
         )
         GROUP BY team_id
-        HAVING count > 0
     """
 
     with tags_context(usage_report="salesforce_recordings_signals"):
