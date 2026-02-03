@@ -17,7 +17,6 @@ import { organizationLogic } from 'scenes/organizationLogic'
 import { DuplicateToProjectModal } from 'scenes/surveys/DuplicateToProjectModal'
 import { SurveyHeadline } from 'scenes/surveys/SurveyHeadline'
 import { SurveyNoResponsesBanner } from 'scenes/surveys/SurveyNoResponsesBanner'
-import { SurveyResponseFilters } from 'scenes/surveys/SurveyResponseFilters'
 import { SurveyStatsSummary } from 'scenes/surveys/SurveyStatsSummary'
 import { LaunchSurveyButton } from 'scenes/surveys/components/LaunchSurveyButton'
 import { SurveyFeedbackButton } from 'scenes/surveys/components/SurveyFeedbackButton'
@@ -48,7 +47,9 @@ import {
 } from '~/types'
 
 import { SurveyDraftContent } from './SurveyDraftContent'
+import { SurveyQuestionFilter, SurveyResultsFiltersBar } from './SurveyFilters'
 import { SurveyExportContent, SurveyNotificationsContent, SurveySidebar, SurveySidebarContent } from './SurveySidebar'
+import { SurveyResponseFilters } from 'scenes/surveys/SurveyResponseFilters'
 
 const RESOURCE_TYPE = 'survey'
 
@@ -348,33 +349,38 @@ function SurveySummaryContent(): JSX.Element {
                 <>
                     {isSurveyHeadlineEnabled && <SurveyHeadline />}
 
-                    {/* Question visualizations */}
-                    <div className="flex flex-col gap-2">
-                        {survey.questions.map((question, i) => {
-                            if (!question.id || question.type === SurveyQuestionType.Link) {
-                                return null
-                            }
-                            return (
-                                <div key={question.id} className="flex flex-col gap-2">
-                                    <SurveyQuestionVisualization question={question} questionIndex={i} />
-                                    <LemonDivider />
-                                </div>
-                            )
-                        })}
-                    </div>
-                    <LemonButton
-                        type="primary"
-                        data-attr="survey-results-explore"
-                        icon={<IconGraph />}
-                        to={surveyAsInsightURL}
-                        className="max-w-40"
-                    >
-                        Explore results
-                    </LemonButton>
-                </>
-            ) : (
-                <SurveyNoResponsesBanner type="survey" />
-            )}
+                        {/* Question visualizations */}
+                        <div className="flex flex-col gap-2">
+                            {survey.questions.map((question, i) => {
+                                if (!question.id || question.type === SurveyQuestionType.Link) {
+                                    return null
+                                }
+                                return (
+                                    <div key={question.id} className="flex flex-col gap-2">
+                                        <SurveyQuestionVisualization
+                                            question={question}
+                                            questionIndex={i}
+                                            filterContent={<SurveyQuestionFilter question={question} />}
+                                        />
+                                        <LemonDivider />
+                                    </div>
+                                )
+                            })}
+                        </div>
+                        <LemonButton
+                            type="primary"
+                            data-attr="survey-results-explore"
+                            icon={<IconGraph />}
+                            to={surveyAsInsightURL}
+                            className="max-w-40"
+                        >
+                            Explore results
+                        </LemonButton>
+                    </>
+                ) : (
+                    <SurveyNoResponsesBanner type="survey" />
+                )}
+            </div>
         </div>
     )
 }
@@ -382,35 +388,36 @@ function SurveySummaryContent(): JSX.Element {
 function SurveyResponsesContent(): JSX.Element {
     const { dataTableQuery, surveyLoading, archivedResponseUuids } = useValues(surveyLogic)
 
-    if (surveyLoading) {
-        return (
-            <div className="px-4 pb-4">
-                <LemonSkeleton />
-            </div>
-        )
-    }
-
     return (
-        <div className="px-4 pb-4">
-            <div className="survey-table-results">
-                <Query
-                    query={dataTableQuery}
-                    context={{
-                        rowProps: (record: unknown) => {
-                            if (typeof record !== 'object' || !record || !('result' in record)) {
-                                return {}
-                            }
-                            const result = record.result
-                            if (!Array.isArray(result)) {
-                                return {}
-                            }
-                            return {
-                                className: archivedResponseUuids.has(result[0].uuid) ? 'opacity-50' : undefined,
-                            }
-                        },
-                    }}
-                />
+        <div className="px-4 pb-4 space-y-4">
+            <div className="mx-auto w-full max-w-[1200px]">
+                <SurveyResultsFiltersBar />
             </div>
+            {surveyLoading ? (
+                <LemonSkeleton />
+            ) : (
+                <div className="mx-auto w-full max-w-[1400px]">
+                    <div className="survey-table-results">
+                        <Query
+                            query={dataTableQuery}
+                            context={{
+                                rowProps: (record: unknown) => {
+                                    if (typeof record !== 'object' || !record || !('result' in record)) {
+                                        return {}
+                                    }
+                                    const result = record.result
+                                    if (!Array.isArray(result)) {
+                                        return {}
+                                    }
+                                    return {
+                                        className: archivedResponseUuids.has(result[0].uuid) ? 'opacity-50' : undefined,
+                                    }
+                                },
+                            }}
+                        />
+                    </div>
+                </div>
+            )}
         </div>
     )
 }
