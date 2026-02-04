@@ -32,9 +32,9 @@ class TestSalesforceOrgMapping(TestCase):
 class TestSalesforceUsageUpdate(TestCase):
     def test_create_update(self):
         signals = UsageSignals(
-            active_users_7d=100,
-            active_users_30d=500,
-            sessions_7d=200,
+            total_events_7d=10000,
+            total_events_30d=50000,
+            events_avg_daily_7d=1428.57,
         )
         update = SalesforceUsageUpdate(
             salesforce_account_id="001ABC123",
@@ -42,7 +42,7 @@ class TestSalesforceUsageUpdate(TestCase):
         )
 
         assert update.salesforce_account_id == "001ABC123"
-        assert update.signals.active_users_7d == 100
+        assert update.signals.total_events_7d == 10000
 
 
 class TestUsageEnrichmentInputs(TestCase):
@@ -68,81 +68,41 @@ class TestUsageEnrichmentInputs(TestCase):
 class TestPrepareSalesforceUpdateRecord(TestCase):
     def test_basic_signals(self):
         signals = UsageSignals(
-            active_users_7d=100,
-            active_users_30d=500,
-            sessions_7d=200,
-            sessions_30d=800,
-            events_per_session_7d=10.5,
-            events_per_session_30d=9.8,
+            total_events_7d=10000,
+            events_avg_daily_7d=1428.57,
             products_activated_7d=["analytics", "recordings"],
+            events_7d_momentum=15.5,
+            total_events_30d=50000,
+            events_avg_daily_30d=1666.67,
             products_activated_30d=["analytics", "recordings", "feature_flags"],
-            days_since_last_login=3,
+            events_30d_momentum=-5.0,
         )
 
         record = prepare_salesforce_update_record("001ABC123", signals)
 
         assert record["Id"] == "001ABC123"
-        assert record["posthog_active_users_7d__c"] == 100
-        assert record["posthog_active_users_30d__c"] == 500
-        assert record["posthog_sessions_7d__c"] == 200
-        assert record["posthog_sessions_30d__c"] == 800
-        assert record["posthog_events_per_session_7d__c"] == 10.5
-        assert record["posthog_events_per_session_30d__c"] == 9.8
+        assert record["posthog_total_events_7d__c"] == 10000
+        assert record["posthog_events_avg_daily_7d__c"] == 1428.57
         assert record["posthog_products_7d__c"] == "analytics,recordings"
+        assert record["posthog_events_7d_momentum__c"] == 15.5
+        assert record["posthog_total_events_30d__c"] == 50000
+        assert record["posthog_events_avg_daily_30d__c"] == 1666.67
         assert record["posthog_products_30d__c"] == "analytics,feature_flags,recordings"
-        assert record["posthog_last_login_days__c"] == 3
-
-    def test_with_momentum(self):
-        signals = UsageSignals(
-            active_users_7d=100,
-            active_users_30d=500,
-            active_users_7d_momentum=25.5,
-            active_users_30d_momentum=-10.2,
-            sessions_7d_momentum=15.0,
-            sessions_30d_momentum=5.0,
-            events_per_session_7d_momentum=2.5,
-            events_per_session_30d_momentum=-1.5,
-        )
-
-        record = prepare_salesforce_update_record("001ABC123", signals)
-
-        assert record["posthog_active_users_7d_momentum__c"] == 25.5
-        assert record["posthog_active_users_30d_momentum__c"] == -10.2
-        assert record["posthog_sessions_7d_momentum__c"] == 15.0
-        assert record["posthog_sessions_30d_momentum__c"] == 5.0
-        assert record["posthog_eps_7d_momentum__c"] == 2.5
-        assert record["posthog_eps_30d_momentum__c"] == -1.5
+        assert record["posthog_events_30d_momentum__c"] == -5.0
 
     def test_none_values_excluded(self):
         signals = UsageSignals(
-            active_users_7d=100,
-            events_per_session_7d=None,
-            days_since_last_login=None,
-            active_users_7d_momentum=None,
+            total_events_7d=10000,
+            events_avg_daily_7d=None,
+            events_7d_momentum=None,
         )
 
         record = prepare_salesforce_update_record("001ABC123", signals)
 
         assert record["Id"] == "001ABC123"
-        assert record["posthog_active_users_7d__c"] == 100
-        assert "posthog_events_per_session_7d__c" not in record
-        assert "posthog_last_login_days__c" not in record
-        assert "posthog_active_users_7d_momentum__c" not in record
-
-    def test_per_user_metrics(self):
-        signals = UsageSignals(
-            insights_per_user_7d=2.5,
-            insights_per_user_30d=3.2,
-            dashboards_per_user_7d=1.0,
-            dashboards_per_user_30d=1.5,
-        )
-
-        record = prepare_salesforce_update_record("001ABC123", signals)
-
-        assert record["posthog_insights_per_user_7d__c"] == 2.5
-        assert record["posthog_insights_per_user_30d__c"] == 3.2
-        assert record["posthog_dashboards_per_user_7d__c"] == 1.0
-        assert record["posthog_dashboards_per_user_30d__c"] == 1.5
+        assert record["posthog_total_events_7d__c"] == 10000
+        assert "posthog_events_avg_daily_7d__c" not in record
+        assert "posthog_events_7d_momentum__c" not in record
 
     def test_empty_products_list(self):
         signals = UsageSignals(
@@ -154,6 +114,17 @@ class TestPrepareSalesforceUpdateRecord(TestCase):
 
         assert record["posthog_products_7d__c"] == ""
         assert record["posthog_products_30d__c"] == ""
+
+    def test_zero_events_included(self):
+        signals = UsageSignals(
+            total_events_7d=0,
+            total_events_30d=0,
+        )
+
+        record = prepare_salesforce_update_record("001ABC123", signals)
+
+        assert record["posthog_total_events_7d__c"] == 0
+        assert record["posthog_total_events_30d__c"] == 0
 
 
 class TestWorkflowParseInputs(TestCase):
@@ -242,7 +213,7 @@ class TestUpdateSalesforceUsageActivity(TestCase):
     @patch(f"{WORKFLOW_MODULE}.get_salesforce_client")
     @patch(f"{WORKFLOW_MODULE}.close_old_connections")
     async def test_bulk_update_exception_returns_zero(self, _mock_close, mock_sf_client, _mock_heartbeat):
-        signals = UsageSignals(active_users_7d=100, sessions_7d=50)
+        signals = UsageSignals(total_events_7d=10000, events_avg_daily_7d=1428.57)
         updates = [
             SalesforceUsageUpdate(salesforce_account_id="001ABC", signals=signals),
             SalesforceUsageUpdate(salesforce_account_id="001DEF", signals=signals),
@@ -260,7 +231,7 @@ class TestUpdateSalesforceUsageActivity(TestCase):
     @patch(f"{WORKFLOW_MODULE}.get_salesforce_client")
     @patch(f"{WORKFLOW_MODULE}.close_old_connections")
     async def test_partial_success_counts_correctly(self, _mock_close, mock_sf_client, _mock_heartbeat):
-        signals = UsageSignals(active_users_7d=100)
+        signals = UsageSignals(total_events_7d=10000)
         updates = [
             SalesforceUsageUpdate(salesforce_account_id="001ABC", signals=signals),
             SalesforceUsageUpdate(salesforce_account_id="001DEF", signals=signals),
@@ -283,7 +254,7 @@ class TestUpdateSalesforceUsageActivity(TestCase):
     @patch(f"{WORKFLOW_MODULE}.get_salesforce_client")
     @patch(f"{WORKFLOW_MODULE}.close_old_connections")
     async def test_all_success(self, _mock_close, mock_sf_client, _mock_heartbeat):
-        signals = UsageSignals(active_users_7d=100)
+        signals = UsageSignals(total_events_7d=10000)
         updates = [
             SalesforceUsageUpdate(salesforce_account_id="001ABC", signals=signals),
             SalesforceUsageUpdate(salesforce_account_id="001DEF", signals=signals),

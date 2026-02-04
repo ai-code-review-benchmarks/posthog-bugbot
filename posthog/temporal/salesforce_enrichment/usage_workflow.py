@@ -146,7 +146,7 @@ async def fetch_salesforce_org_ids_activity() -> list[SalesforceOrgMapping]:
 
 @activity.defn
 async def aggregate_usage_signals_activity(org_ids: list[str]) -> dict[str, UsageSignals]:
-    """Aggregate usage signals from ClickHouse and PostgreSQL for given org IDs."""
+    """Aggregate usage signals from organization group properties for given org IDs."""
     async with Heartbeater():
         close_old_connections()
         logger = LOGGER.bind()
