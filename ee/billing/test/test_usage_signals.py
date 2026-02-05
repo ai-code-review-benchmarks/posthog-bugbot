@@ -47,31 +47,31 @@ class TestUsageSignalsDataClass(TestCase):
 
 
 class TestFetchUsageSignalsFromGroups(TestCase):
-    @patch("ee.billing.salesforce_enrichment.usage_signals.sync_execute")
-    def test_returns_parsed_signals(self, mock_sync_execute):
-        mock_sync_execute.return_value = [
-            (
-                "org-uuid-1",
-                10000,
-                1428.57,
-                "analytics,recordings",
-                50000,
-                1666.67,
-                "analytics,recordings,feature_flags",
-                15.5,
-                -5.0,
-            ),
-            (
-                "org-uuid-2",
-                5000,
-                714.29,
-                "surveys",
-                20000,
-                666.67,
-                "surveys,error_tracking",
-                25.0,
-                10.0,
-            ),
+    @patch("ee.billing.salesforce_enrichment.usage_signals.query_with_columns")
+    def test_returns_parsed_signals(self, mock_query):
+        mock_query.return_value = [
+            {
+                "org_id": "org-uuid-1",
+                "events_7d": 10000,
+                "events_avg_daily_7d": 1428.57,
+                "products_7d": "analytics,recordings",
+                "events_30d": 50000,
+                "events_avg_daily_30d": 1666.67,
+                "products_30d": "analytics,recordings,feature_flags",
+                "events_7d_momentum": 15.5,
+                "events_30d_momentum": -5.0,
+            },
+            {
+                "org_id": "org-uuid-2",
+                "events_7d": 5000,
+                "events_avg_daily_7d": 714.29,
+                "products_7d": "surveys",
+                "events_30d": 20000,
+                "events_avg_daily_30d": 666.67,
+                "products_30d": "surveys,error_tracking",
+                "events_7d_momentum": 25.0,
+                "events_30d_momentum": 10.0,
+            },
         ]
 
         result = fetch_usage_signals_from_groups(["org-uuid-1", "org-uuid-2"])
@@ -90,35 +90,35 @@ class TestFetchUsageSignalsFromGroups(TestCase):
         assert result["org-uuid-2"]["total_events_7d"] == 5000
         assert result["org-uuid-2"]["products_activated_7d"] == ["surveys"]
 
-    @patch("ee.billing.salesforce_enrichment.usage_signals.sync_execute")
-    def test_empty_org_ids_returns_empty_dict(self, mock_sync_execute):
+    @patch("ee.billing.salesforce_enrichment.usage_signals.query_with_columns")
+    def test_empty_org_ids_returns_empty_dict(self, mock_query):
         result = fetch_usage_signals_from_groups([])
 
         assert result == {}
-        mock_sync_execute.assert_not_called()
+        mock_query.assert_not_called()
 
-    @patch("ee.billing.salesforce_enrichment.usage_signals.sync_execute")
-    def test_no_results_returns_empty_dict(self, mock_sync_execute):
-        mock_sync_execute.return_value = []
+    @patch("ee.billing.salesforce_enrichment.usage_signals.query_with_columns")
+    def test_no_results_returns_empty_dict(self, mock_query):
+        mock_query.return_value = []
 
         result = fetch_usage_signals_from_groups(["org-uuid-1"])
 
         assert result == {}
 
-    @patch("ee.billing.salesforce_enrichment.usage_signals.sync_execute")
-    def test_handles_null_values(self, mock_sync_execute):
-        mock_sync_execute.return_value = [
-            (
-                "org-uuid-1",
-                None,  # events_7d
-                None,  # events_avg_daily_7d
-                "",  # products_7d (empty)
-                None,  # events_30d
-                None,  # events_avg_daily_30d
-                None,  # products_30d
-                None,  # events_7d_momentum
-                None,  # events_30d_momentum
-            ),
+    @patch("ee.billing.salesforce_enrichment.usage_signals.query_with_columns")
+    def test_handles_null_values(self, mock_query):
+        mock_query.return_value = [
+            {
+                "org_id": "org-uuid-1",
+                "events_7d": None,
+                "events_avg_daily_7d": None,
+                "products_7d": "",
+                "events_30d": None,
+                "events_avg_daily_30d": None,
+                "products_30d": None,
+                "events_7d_momentum": None,
+                "events_30d_momentum": None,
+            },
         ]
 
         result = fetch_usage_signals_from_groups(["org-uuid-1"])

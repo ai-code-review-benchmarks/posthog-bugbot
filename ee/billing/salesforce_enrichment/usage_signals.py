@@ -2,13 +2,12 @@
 
 from dataclasses import dataclass, field
 
-import structlog
-
-from posthog.clickhouse.client import sync_execute
 from posthog.clickhouse.client.connection import Workload
+from posthog.clickhouse.client.execute import query_with_columns
 from posthog.clickhouse.query_tagging import tags_context
+from posthog.temporal.common.logger import get_logger
 
-logger = structlog.get_logger(__name__)
+LOGGER = get_logger(__name__)
 
 
 @dataclass
@@ -55,22 +54,22 @@ def fetch_usage_signals_from_groups(org_ids: list[str]) -> dict[str, dict]:
     """
 
     with tags_context(usage_report="salesforce_usage_signals"):
-        results = sync_execute(query, {"org_ids": org_ids}, workload=Workload.OFFLINE)
+        results = query_with_columns(query, {"org_ids": org_ids}, workload=Workload.OFFLINE)
 
     def parse_products(products_str: str) -> list[str]:
         """Parse comma-separated products string into a list."""
         return [p.strip() for p in products_str.split(",") if p.strip()] if products_str else []
 
     return {
-        row[0]: {
-            "total_events_7d": row[1] or 0,
-            "events_avg_daily_7d": row[2],
-            "products_activated_7d": parse_products(row[3]),
-            "total_events_30d": row[4] or 0,
-            "events_avg_daily_30d": row[5],
-            "products_activated_30d": parse_products(row[6]),
-            "events_7d_momentum": row[7],
-            "events_30d_momentum": row[8],
+        row["org_id"]: {
+            "total_events_7d": row["events_7d"] or 0,
+            "events_avg_daily_7d": row["events_avg_daily_7d"],
+            "products_activated_7d": parse_products(row["products_7d"]),
+            "total_events_30d": row["events_30d"] or 0,
+            "events_avg_daily_30d": row["events_avg_daily_30d"],
+            "products_activated_30d": parse_products(row["products_30d"]),
+            "events_7d_momentum": row["events_7d_momentum"],
+            "events_30d_momentum": row["events_30d_momentum"],
         }
         for row in results
     }
@@ -81,7 +80,7 @@ def aggregate_usage_signals_for_orgs(org_ids: list[str]) -> dict[str, UsageSigna
     if not org_ids:
         return {}
 
-    logger.info("fetching_usage_signals_from_groups", org_count=len(org_ids))
+    LOGGER.info("fetching_usage_signals_from_groups", org_count=len(org_ids))
     group_signals = fetch_usage_signals_from_groups(org_ids)
 
     result = {}
@@ -98,5 +97,5 @@ def aggregate_usage_signals_for_orgs(org_ids: list[str]) -> dict[str, UsageSigna
             events_30d_momentum=gs.get("events_30d_momentum"),
         )
 
-    logger.info("fetched_usage_signals", org_count=len(org_ids), signals_found=len(group_signals))
+    LOGGER.info("fetched_usage_signals", org_count=len(org_ids), signals_found=len(group_signals))
     return result
