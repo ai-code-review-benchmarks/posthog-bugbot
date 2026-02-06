@@ -40,10 +40,9 @@ CacheType = Literal["flags", "team_metadata"]
 # the next scheduled run, so at most 1 run is skipped after a crash.
 LOCK_TIMEOUT_SECONDS = 25 * 60  # 25 minutes
 
-# Flag definitions verification has a longer time limit (4 hours) because it verifies
-# two cache variants (with-cohorts and without-cohorts) for all teams. The lock timeout
-# must match the task's time_limit to prevent concurrent executions.
-FLAG_DEFINITIONS_LOCK_TIMEOUT_SECONDS = 4 * 60 * 60  # 4 hours
+# Flag definitions verification has a 1-hour time limit (same as other verification tasks).
+# The lock timeout must match the task's time_limit to prevent concurrent executions.
+FLAG_DEFINITIONS_LOCK_TIMEOUT_SECONDS = 60 * 60  # 1 hour
 
 
 def _run_flag_definitions_verification() -> None:
@@ -51,16 +50,10 @@ def _run_flag_definitions_verification() -> None:
     Run verification for both flag definitions cache variants.
 
     Handles:
-    - Early exit if FLAGS_REDIS_URL not configured
     - Distributed lock to prevent concurrent executions
     - Verifying both with-cohorts and without-cohorts variants
     """
     cache_type = "flag_definitions"
-
-    # Check Redis URL first to avoid holding a lock when no work will be done
-    if not settings.FLAGS_REDIS_URL:
-        logger.info("Flags Redis URL not set, skipping cache verification", cache_type=cache_type)
-        return
 
     lock_key = f"posthog:hypercache_verification:{cache_type}:lock"
 
@@ -224,8 +217,8 @@ def verify_and_fix_team_metadata_cache_task() -> None:
 @shared_task(
     ignore_result=True,
     queue=CeleryQueue.DEFAULT.value,
-    soft_time_limit=3 * 60 * 60 + 30 * 60,  # 3h 30min soft limit
-    time_limit=4 * 60 * 60,  # 4 hour hard limit (distributed lock prevents overlap)
+    soft_time_limit=50 * 60,  # 50 min soft limit
+    time_limit=60 * 60,  # 1 hour hard limit (distributed lock prevents overlap)
 )
 def verify_and_fix_flag_definitions_cache_task() -> None:
     """

@@ -156,9 +156,6 @@ def refresh_expiring_flag_definitions_cache_entries() -> None:
     Note: Most cache updates happen via Django signals when flags change.
     This job just prevents expiration-related cache misses.
     """
-    if not settings.FLAGS_REDIS_URL:
-        logger.info("Flags Redis URL not set, skipping flag definitions cache refresh")
-        return
 
     from posthog.storage.cache_expiry_manager import refresh_expiring_caches
 
@@ -217,9 +214,6 @@ def cleanup_stale_flag_definitions_expiry_tracking_task() -> None:
     Runs daily to prevent sorted set bloat from deleted teams.
     Cleans up both with-cohorts and without-cohorts sorted sets.
     """
-    if not settings.FLAGS_REDIS_URL:
-        logger.info("Flags Redis URL not set, skipping flag definitions expiry tracking cleanup")
-        return
 
     from posthog.storage.cache_expiry_manager import cleanup_stale_expiry_tracking
 

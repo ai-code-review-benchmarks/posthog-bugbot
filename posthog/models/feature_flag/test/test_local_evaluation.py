@@ -16,7 +16,6 @@ from posthog.models.feature_flag.local_evaluation import (
     FLAG_DEFINITIONS_NO_COHORTS_HYPERCACHE_MANAGEMENT_CONFIG,
     _extract_cohort_ids_from_filters,
     _get_both_flags_responses_for_local_evaluation,
-    _get_flags_for_local_evaluation,
     _get_flags_response_for_local_evaluation,
     _load_cohorts_with_dependencies,
     clear_flag_caches,
@@ -373,8 +372,8 @@ class TestSurveyFlagExclusion(BaseTest):
             **{flag_field: survey_flag},
         )
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        flag_keys = [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        flag_keys = [f["key"] for f in response["flags"]]
 
         assert regular_flag.key in flag_keys
         assert survey_flag.key not in flag_keys
@@ -394,8 +393,8 @@ class TestSurveyFlagExclusion(BaseTest):
             linked_flag=user_linked_flag,
         )
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        flag_keys = [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        flag_keys = [f["key"] for f in response["flags"]]
 
         assert user_linked_flag.key in flag_keys
 
@@ -414,13 +413,13 @@ class TestSurveyFlagExclusion(BaseTest):
             targeting_flag=survey_flag,
         )
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        assert survey_flag.key not in [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        assert survey_flag.key not in [f["key"] for f in response["flags"]]
 
         survey.delete()
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        assert survey_flag.key in [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        assert survey_flag.key in [f["key"] for f in response["flags"]]
 
     def test_survey_flags_excluded_from_api_response(self):
         """Verify the full API response excludes survey flags."""
@@ -516,16 +515,16 @@ class TestSurveyFlagExclusion(BaseTest):
             targeting_flag=survey_flag,
         )
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        assert survey_flag.key not in [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        assert survey_flag.key not in [f["key"] for f in response["flags"]]
 
         # Archive the survey (not delete)
         survey.archived = True
         survey.save()
 
         # Flag should still be excluded since the survey still exists
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        assert survey_flag.key not in [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        assert survey_flag.key not in [f["key"] for f in response["flags"]]
 
     def test_survey_flag_reassignment_updates_exclusions(self):
         """When a survey changes which flags it uses, both old and new flags should update correctly."""
@@ -547,16 +546,16 @@ class TestSurveyFlagExclusion(BaseTest):
             targeting_flag=flag_a,
         )
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        flag_keys = [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        flag_keys = [f["key"] for f in response["flags"]]
         assert flag_a.key not in flag_keys
         assert flag_b.key in flag_keys
 
         survey.targeting_flag = flag_b
         survey.save()
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        flag_keys = [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        flag_keys = [f["key"] for f in response["flags"]]
         assert flag_a.key in flag_keys
         assert flag_b.key not in flag_keys
 
@@ -576,8 +575,8 @@ class TestSurveyFlagExclusion(BaseTest):
                 targeting_flag=shared_flag,
             )
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        flag_keys = [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        flag_keys = [f["key"] for f in response["flags"]]
 
         assert shared_flag.key not in flag_keys
 
@@ -608,8 +607,8 @@ class TestSurveyFlagExclusion(BaseTest):
             internal_response_sampling_flag=flag_b,
         )
 
-        flags, _ = _get_flags_for_local_evaluation(self.team, include_cohorts=True)
-        flag_keys = [f.key for f in flags]
+        response = _get_flags_response_for_local_evaluation(self.team, include_cohorts=True)
+        flag_keys = [f["key"] for f in response["flags"]]
 
         assert flag_a.key not in flag_keys
         assert flag_b.key not in flag_keys
@@ -1396,8 +1395,8 @@ class TestFlagDefinitionsManagementCommands(BaseTest):
 class TestFlagDefinitionsCacheWithoutRedis(BaseTest):
     """Test flag definitions cache behavior when FLAGS_REDIS_URL is not set."""
 
-    def test_update_flag_definitions_cache_returns_false_without_redis(self):
-        """Test update returns False when FLAGS_REDIS_URL not configured."""
+    def test_update_flag_definitions_cache_returns_true_without_redis(self):
+        """Test update returns True when FLAGS_REDIS_URL not configured."""
         FeatureFlag.objects.create(
             team=self.team,
             key="test-flag",
