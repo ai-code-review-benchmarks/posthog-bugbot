@@ -624,7 +624,7 @@ def update_flag_definitions_cache(team_or_id: Team | int, ttl: int | None = None
     else:
         team = team_or_id
 
-    logger.info(f"Syncing feature_flags cache for team {team.id}")
+    logger.info("Syncing feature_flags cache for team", team_id=team.id)
 
     timeout = ttl if ttl is not None else settings.FLAGS_CACHE_TTL
     start_time = time.time()
