@@ -81,6 +81,7 @@ class Command(BaseHyperCacheCommand):
             self.stdout.write("=" * 70)
 
             # Store config and include_cohorts for the verify_team method
+            # Note: Not thread-safe, but management commands run single-threaded
             self._current_config = config
             self._include_cohorts = include_cohorts
 

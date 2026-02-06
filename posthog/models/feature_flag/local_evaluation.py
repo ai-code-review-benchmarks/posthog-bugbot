@@ -32,6 +32,7 @@ from django.dispatch import receiver
 
 import structlog
 from posthoganalytics import capture_exception
+from prometheus_client import Counter
 
 from posthog.models.cohort.cohort import Cohort, CohortOrEmpty
 from posthog.models.feature_flag import FeatureFlag
@@ -43,7 +44,7 @@ from posthog.models.tag import Tag
 from posthog.models.team import Team
 from posthog.person_db_router import PERSONS_DB_FOR_READ
 from posthog.storage.hypercache import CACHE_SYNC_COUNTER, CACHE_SYNC_DURATION_HISTOGRAM, HyperCache
-from posthog.storage.hypercache_manager import HyperCacheManagementConfig, UpdateFn
+from posthog.storage.hypercache_manager import HyperCacheManagementConfig
 
 logger = structlog.get_logger(__name__)
 
@@ -51,6 +52,13 @@ logger = structlog.get_logger(__name__)
 # Sorted set keys for tracking cache expirations
 FLAG_DEFINITIONS_CACHE_EXPIRY_SORTED_SET = "flag_definitions_cache_expiry"
 FLAG_DEFINITIONS_NO_COHORTS_CACHE_EXPIRY_SORTED_SET = "flag_definitions_no_cohorts_cache_expiry"
+
+# Metric to track flags dropped during batch processing due to errors
+FLAG_PROCESSING_ERROR_COUNTER = Counter(
+    "posthog_flag_definitions_processing_error",
+    "Number of flags dropped from cache due to processing errors",
+    labelnames=["team_id"],
+)
 
 # Shared filter for flags excluded from local evaluation.
 # Encrypted remote config flags can only be accessed via the dedicated /remote_config
@@ -484,6 +492,9 @@ def _get_flags_response_for_local_evaluation_batch(
                         extra={"flag_id": feature_flag.pk},
                         exc_info=True,
                     )
+                    # Track dropped flags for observability - a non-zero count indicates
+                    # potential data inconsistency between batch and single-team paths
+                    FLAG_PROCESSING_ERROR_COUNTER.labels(team_id=str(team.id)).inc()
                     continue
 
             # Sort flags by key for consistent ordering (important for ETag stability)
@@ -628,6 +639,7 @@ def clear_flag_definition_caches(team: Team, kinds: list[str] | None = None):
         team: Team object
         kinds: Optional list of cache kinds to clear ("redis", "s3")
     """
+    # Import here to avoid circular import
     from posthog.redis import get_client
 
     # Clear from shared cache (and S3 if requested)
@@ -896,13 +908,13 @@ def _compare_flag_definition_fields(db_flag: dict, cached_flag: dict) -> list[di
 # Note: We have two separate configs, one for each cache variant
 FLAG_DEFINITIONS_HYPERCACHE_MANAGEMENT_CONFIG = HyperCacheManagementConfig(
     hypercache=flags_hypercache,
-    update_fn=cast(UpdateFn, update_flag_definitions_cache),
+    update_fn=update_flag_definitions_cache,
     cache_name="flag_definitions",
 )
 
 FLAG_DEFINITIONS_NO_COHORTS_HYPERCACHE_MANAGEMENT_CONFIG = HyperCacheManagementConfig(
     hypercache=flags_without_cohorts_hypercache,
-    update_fn=cast(UpdateFn, update_flag_definitions_cache),
+    update_fn=update_flag_definitions_cache,
     cache_name="flag_definitions_no_cohorts",
 )
 
