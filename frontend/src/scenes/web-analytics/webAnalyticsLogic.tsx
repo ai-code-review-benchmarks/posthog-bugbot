@@ -76,6 +76,7 @@ import {
     WebAnalyticsFiltersConfig,
 } from '~/types'
 
+import { IncludeHostToggle } from './IncludeHostToggle'
 import {
     ActiveHoursTab,
     ConversionGoalWarning,
@@ -209,6 +210,7 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
         setIsPathCleaningEnabled: (isPathCleaningEnabled: boolean) => ({ isPathCleaningEnabled }),
         setShouldFilterTestAccounts: (shouldFilterTestAccounts: boolean) => ({ shouldFilterTestAccounts }),
         setShouldStripQueryParams: (shouldStripQueryParams: boolean) => ({ shouldStripQueryParams }),
+        setIncludeHostPath: (includeHostPath: boolean) => ({ includeHostPath }),
         setConversionGoal: (conversionGoal: WebAnalyticsConversionGoal | null) => ({ conversionGoal }),
         openAsNewInsight: (tileId: TileId, tabId?: string) => ({ tileId, tabId }),
         setConversionGoalWarning: (warning: ConversionGoalWarning | null) => ({ warning }),
@@ -411,6 +413,13 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
             persistConfig,
             {
                 setShouldStripQueryParams: (_, { shouldStripQueryParams }) => shouldStripQueryParams,
+            },
+        ],
+        includeHostPath: [
+            false as boolean,
+            persistConfig,
+            {
+                setIncludeHostPath: (_, { includeHostPath }) => includeHostPath,
             },
         ],
         conversionGoal: [
@@ -667,11 +676,12 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
             }),
         ],
         controls: [
-            (s) => [s.isPathCleaningEnabled, s.shouldFilterTestAccounts, s.shouldStripQueryParams],
-            (isPathCleaningEnabled, filterTestAccounts, shouldStripQueryParams) => ({
+            (s) => [s.isPathCleaningEnabled, s.shouldFilterTestAccounts, s.shouldStripQueryParams, s.includeHostPath],
+            (isPathCleaningEnabled, filterTestAccounts, shouldStripQueryParams, includeHostPath) => ({
                 isPathCleaningEnabled,
                 filterTestAccounts,
                 shouldStripQueryParams,
+                includeHostPath,
             }),
         ],
         filters: [
@@ -836,7 +846,7 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
             (
                 productTab,
                 { graphsTab, sourceTab, deviceTab, pathTab, geographyTab, shouldShowGeoIPQueries, activeHoursTab },
-                { isPathCleaningEnabled, filterTestAccounts, shouldStripQueryParams },
+                { isPathCleaningEnabled, filterTestAccounts, shouldStripQueryParams, includeHostPath },
                 {
                     webAnalyticsFilters,
                     replayFilters,
@@ -1282,10 +1292,12 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
                                               includeScrollDepth: false, // TODO needs some perf work before it can be enabled
                                               includeBounceRate: true,
                                               doPathCleaning: isPathCleaningEnabled,
+                                              includeHost: includeHostPath,
                                               includeAvgTimeOnPage:
                                                   !!featureFlags[FEATURE_FLAGS.AVERAGE_PAGE_VIEW_COLUMN],
                                           },
                                           {
+                                              control: <IncludeHostToggle />,
                                               docs: {
                                                   url: 'https://posthog.com/docs/web-analytics/dashboard#paths',
                                                   title: 'Paths',
@@ -1327,10 +1339,12 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
                                               includeBounceRate: true,
                                               includeScrollDepth: false,
                                               doPathCleaning: isPathCleaningEnabled,
+                                              includeHost: includeHostPath,
                                               includeAvgTimeOnPage:
                                                   !!featureFlags[FEATURE_FLAGS.AVERAGE_PAGE_VIEW_COLUMN],
                                           },
                                           {
+                                              control: <IncludeHostToggle />,
                                               docs: {
                                                   url: 'https://posthog.com/docs/web-analytics/dashboard#paths',
                                                   title: 'Entry Path',
@@ -1362,8 +1376,10 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
                                               includeBounceRate: false,
                                               includeScrollDepth: false,
                                               doPathCleaning: isPathCleaningEnabled,
+                                              includeHost: includeHostPath,
                                           },
                                           {
+                                              control: <IncludeHostToggle />,
                                               docs: {
                                                   url: 'https://posthog.com/docs/web-analytics/dashboard#paths',
                                                   title: 'End Path',
@@ -2133,6 +2149,7 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
                 domainFilter,
                 deviceTypeFilter,
                 tileVisualizations,
+                includeHostPath,
             } = values
 
             // These tabs don't support any filters, so we can just return the base path to keep the url clean
@@ -2203,6 +2220,11 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
             if (tileVisualizations) {
                 urlParams.set('tile_visualizations', JSON.stringify(tileVisualizations))
             }
+            if (includeHostPath) {
+                urlParams.set('include_host_path', 'true')
+            } else {
+                urlParams.delete('include_host_path')
+            }
 
             let basePath = '/web'
             if (productTab === ProductTab.PAGE_REPORTS) {
@@ -2233,6 +2255,7 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
             setDomainFilter: stateToUrl,
             setDeviceTypeFilter: stateToUrl,
             setTileVisualization: stateToUrl,
+            setIncludeHostPath: stateToUrl,
         }
     }),
 
@@ -2259,6 +2282,7 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
                 domain,
                 device_type,
                 tile_visualizations,
+                include_host_path,
             }: Record<string, any>
         ): void => {
             if (
@@ -2341,6 +2365,12 @@ export const webAnalyticsLogic = kea<webAnalyticsLogicType>([
             if (tile_visualizations && !objectsEqual(tile_visualizations, values.tileVisualizations)) {
                 for (const [tileId, visualization] of Object.entries(tile_visualizations)) {
                     actions.setTileVisualization(tileId as TileId, visualization as TileVisualizationOption)
+                }
+            }
+            if (include_host_path !== undefined) {
+                const parsed = [true, 'true', 1, '1'].includes(include_host_path)
+                if (parsed !== values.includeHostPath) {
+                    actions.setIncludeHostPath(parsed)
                 }
             }
         }
