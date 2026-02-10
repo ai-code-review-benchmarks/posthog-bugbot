@@ -69,3 +69,8 @@ TEAM_METADATA_CACHE_VERIFICATION_CHUNK_SIZE: int = get_from_env(
 TEAM_METADATA_CACHE_VERIFICATION_GRACE_PERIOD_MINUTES: int = get_from_env(
     "TEAM_METADATA_CACHE_VERIFICATION_GRACE_PERIOD_MINUTES", 5, type_cast=int
 )
+
+# Batch size for processing feature flags during cache updates. Flags are loaded
+# from the database in chunks of this size using QuerySet.iterator() to reduce
+# peak memory usage for teams with many flags.
+FLAGS_BATCH_PROCESSING_CHUNK_SIZE: int = get_from_env("FLAGS_BATCH_PROCESSING_CHUNK_SIZE", 500, type_cast=int)

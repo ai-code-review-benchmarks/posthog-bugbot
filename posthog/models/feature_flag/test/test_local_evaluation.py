@@ -903,3 +903,87 @@ class TestGetBothFlagsResponsesForLocalEvaluation(BaseTest):
 
         assert with_cohorts["group_type_mapping"] == {"0": "company"}
         assert without_cohorts["group_type_mapping"] == {"0": "company"}
+
+
+class TestBatchedFlagProcessing(BaseTest):
+    @patch("posthog.models.feature_flag.local_evaluation.settings")
+    def test_uses_iterator_with_configured_chunk_size(self, mock_settings):
+        mock_settings.FLAGS_BATCH_PROCESSING_CHUNK_SIZE = 100
+
+        FeatureFlag.objects.create(
+            team=self.team,
+            key="test-flag",
+            filters={"groups": [{"rollout_percentage": 100}]},
+        )
+
+        with patch("posthog.models.feature_flag.local_evaluation._get_base_flags_queryset") as mock_get_queryset:
+            mock_queryset = mock_get_queryset.return_value
+            mock_queryset.only.return_value = mock_queryset
+            mock_queryset.iterator.return_value = iter([])
+
+            _get_both_flags_responses_for_local_evaluation(self.team)
+
+            # Verify iterator was called twice (once for cohort collection, once for processing)
+            assert mock_queryset.iterator.call_count == 2
+
+            # Both calls should use the configured chunk size
+            for call in mock_queryset.iterator.call_args_list:
+                assert call.kwargs["chunk_size"] == 100
+
+    def test_batched_processing_handles_multiple_flags_with_cohorts(self):
+        cohort1 = Cohort.objects.create(
+            team=self.team,
+            name="cohort-1",
+            filters={
+                "properties": {
+                    "type": "OR",
+                    "values": [{"type": "OR", "values": [{"key": "email", "type": "person", "value": "a"}]}],
+                }
+            },
+        )
+        cohort2 = Cohort.objects.create(
+            team=self.team,
+            name="cohort-2",
+            filters={
+                "properties": {
+                    "type": "OR",
+                    "values": [{"type": "OR", "values": [{"key": "email", "type": "person", "value": "b"}]}],
+                }
+            },
+        )
+
+        for i in range(5):
+            FeatureFlag.objects.create(
+                team=self.team,
+                key=f"flag-{i}",
+                filters={
+                    "groups": [{"properties": [{"type": "cohort", "value": cohort1.pk if i % 2 == 0 else cohort2.pk}]}]
+                },
+            )
+
+        with_cohorts, without_cohorts = _get_both_flags_responses_for_local_evaluation(self.team)
+
+        assert len(with_cohorts["flags"]) == 5
+        assert len(without_cohorts["flags"]) == 5
+        assert str(cohort1.pk) in with_cohorts["cohorts"]
+        assert str(cohort2.pk) in with_cohorts["cohorts"]
+        assert without_cohorts["cohorts"] == {}
+
+    def test_batched_processing_preserves_flag_order(self):
+        for i in range(10):
+            FeatureFlag.objects.create(
+                team=self.team,
+                key=f"flag-{i:02d}",
+                filters={"groups": [{"rollout_percentage": 100}]},
+            )
+
+        with_cohorts, without_cohorts = _get_both_flags_responses_for_local_evaluation(self.team)
+
+        with_keys = [f["key"] for f in with_cohorts["flags"]]
+        without_keys = [f["key"] for f in without_cohorts["flags"]]
+
+        # Keys should be the same in both responses
+        assert with_keys == without_keys
+
+        # All flags should be present
+        assert len(with_keys) == 10

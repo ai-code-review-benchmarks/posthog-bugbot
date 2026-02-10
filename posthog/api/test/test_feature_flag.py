@@ -6959,8 +6959,9 @@ class TestCohortGenerationForFeatureFlag(APIBaseTest, ClickhouseTestMixin):
         response = self.client.get(f"/api/cohort/{cohort.pk}/persons")
         self.assertEqual(len(response.json()["results"]), 0, response)
 
+    @patch("posthog.tasks.feature_flags.update_team_flags_cache")
     @patch("django.db.transaction.on_commit", side_effect=lambda func: func())
-    def test_creating_static_cohort_with_experience_continuity_flag(self, mock_on_commit):
+    def test_creating_static_cohort_with_experience_continuity_flag(self, mock_on_commit, mock_update_cache):
         FeatureFlag.objects.create(
             team=self.team,
             filters={
@@ -7020,8 +7021,9 @@ class TestCohortGenerationForFeatureFlag(APIBaseTest, ClickhouseTestMixin):
         response = self.client.get(f"/api/cohort/{cohort.pk}/persons")
         self.assertEqual(len(response.json()["results"]), 1, response)
 
+    @patch("posthog.tasks.feature_flags.update_team_flags_cache")
     @patch("django.db.transaction.on_commit", side_effect=lambda func: func())
-    def test_creating_static_cohort_iterator(self, mock_on_commit):
+    def test_creating_static_cohort_iterator(self, mock_on_commit, mock_update_cache):
         FeatureFlag.objects.create(
             team=self.team,
             filters={
@@ -7088,8 +7090,9 @@ class TestCohortGenerationForFeatureFlag(APIBaseTest, ClickhouseTestMixin):
         response = self.client.get(f"/api/cohort/{cohort.pk}/persons")
         self.assertEqual(len(response.json()["results"]), 3, response)
 
+    @patch("posthog.tasks.feature_flags.update_team_flags_cache")
     @patch("django.db.transaction.on_commit", side_effect=lambda func: func())
-    def test_creating_static_cohort_with_default_person_properties_adjustment(self, mock_on_commit):
+    def test_creating_static_cohort_with_default_person_properties_adjustment(self, mock_on_commit, mock_update_cache):
         FeatureFlag.objects.create(
             team=self.team,
             filters={
@@ -7181,8 +7184,11 @@ class TestCohortGenerationForFeatureFlag(APIBaseTest, ClickhouseTestMixin):
         self.assertEqual(cohort2.name, "some cohort2")
         self.assertEqual(cohort2.count, 2)
 
+    @patch("posthog.tasks.feature_flags.update_team_flags_cache")
     @patch("django.db.transaction.on_commit", side_effect=lambda func: func())
-    def test_creating_static_cohort_with_cohort_flag_adds_cohort_props_as_default_too(self, mock_on_commit):
+    def test_creating_static_cohort_with_cohort_flag_adds_cohort_props_as_default_too(
+        self, mock_on_commit, mock_update_cache
+    ):
         cohort_nested = Cohort.objects.create(
             team=self.team,
             filters={
