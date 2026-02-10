@@ -13,8 +13,7 @@ export function RecordingDeleted({ deletedAt }: RecordingDeletedProps): JSX.Elem
         <div className="flex flex-col items-center justify-center p-8 text-center">
             <h1 className="text-2xl font-bold mb-4">Recording permanently deleted</h1>
             <p className="text-muted mb-6 max-w-md">
-                This recording has been permanently deleted and cannot be recovered. The recording data has been
-                cryptographically shredded to ensure it cannot be accessed.
+                This recording has been permanently deleted and cannot be recovered.
             </p>
             {deletedAtFormatted && (
                 <LemonBanner type="info" className="max-w-md">
