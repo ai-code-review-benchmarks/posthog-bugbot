@@ -4,7 +4,7 @@ use axum::http::HeaderMap;
 use axum::response::Json;
 use axum_client_ip::InsecureClientIp;
 use bytes::Bytes;
-use chrono::Utc;
+use chrono::{DateTime, TimeZone, Utc};
 use common_types::CapturedEvent;
 use flate2::read::GzDecoder;
 use metrics::counter;
@@ -224,6 +224,122 @@ fn extract_distinct_id(request: &ExportTraceServiceRequest) -> String {
     Uuid::new_v4().to_string()
 }
 
+struct SpanEvent {
+    event_name: String,
+    distinct_id: String,
+    properties: Value,
+    timestamp: Option<DateTime<Utc>>,
+}
+
+fn get_event_name(operation_name: Option<&str>) -> &'static str {
+    match operation_name {
+        Some("chat") => "$ai_generation",
+        Some("embeddings") => "$ai_embedding",
+        _ => "$ai_span",
+    }
+}
+
+fn nanos_to_datetime(nanos: &Value) -> Option<DateTime<Utc>> {
+    let n: i64 = match nanos {
+        Value::String(s) => s.parse().ok()?,
+        Value::Number(n) => n.as_i64()?,
+        _ => return None,
+    };
+    let secs = n / 1_000_000_000;
+    let nsecs = (n % 1_000_000_000) as u32;
+    Utc.timestamp_opt(secs, nsecs).single()
+}
+
+fn extract_span_events(clean_json: &Value, distinct_id: &str) -> Vec<SpanEvent> {
+    let mut events = Vec::new();
+
+    let resource_spans = match clean_json.get("resourceSpans").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return events,
+    };
+
+    for rs in resource_spans {
+        let resource_attrs = rs
+            .pointer("/resource/attributes")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+
+        let scope_spans = match rs.get("scopeSpans").and_then(|v| v.as_array()) {
+            Some(arr) => arr,
+            None => continue,
+        };
+
+        for ss in scope_spans {
+            let spans = match ss.get("spans").and_then(|v| v.as_array()) {
+                Some(arr) => arr,
+                None => continue,
+            };
+
+            for span in spans {
+                let attrs = span
+                    .get("attributes")
+                    .and_then(|v| v.as_object())
+                    .cloned()
+                    .unwrap_or_default();
+
+                let operation_name = attrs
+                    .get("gen_ai.operation.name")
+                    .and_then(|v| v.as_str());
+                let event_name = get_event_name(operation_name).to_string();
+
+                let mut properties = serde_json::Map::new();
+
+                // Structural trace properties
+                if let Some(trace_id) = span.get("traceId") {
+                    properties.insert("$ai_trace_id".to_string(), trace_id.clone());
+                }
+                if let Some(span_id) = span.get("spanId") {
+                    properties.insert("$ai_span_id".to_string(), span_id.clone());
+                }
+                if let Some(parent_id) = span.get("parentSpanId") {
+                    if !parent_id.is_null()
+                        && parent_id.as_str().map_or(true, |s| !s.is_empty())
+                    {
+                        properties.insert("$ai_parent_id".to_string(), parent_id.clone());
+                    }
+                }
+                properties.insert(
+                    "$ai_ingestion_source".to_string(),
+                    Value::String("otel".to_string()),
+                );
+
+                // Span attributes (flat keys from cleaned JSON)
+                for (key, value) in &attrs {
+                    if !properties.contains_key(key.as_str()) {
+                        properties.insert(key.clone(), value.clone());
+                    }
+                }
+
+                // Resource attributes (don't overwrite span attributes)
+                for (key, value) in &resource_attrs {
+                    if !properties.contains_key(key.as_str()) {
+                        properties.insert(key.clone(), value.clone());
+                    }
+                }
+
+                let timestamp = span
+                    .get("startTimeUnixNano")
+                    .and_then(|v| nanos_to_datetime(v));
+
+                events.push(SpanEvent {
+                    event_name,
+                    distinct_id: distinct_id.to_string(),
+                    properties: Value::Object(properties),
+                    timestamp,
+                });
+            }
+        }
+    }
+
+    events
+}
+
 pub async fn otel_handler(
     State(state): State<AppState>,
     ip: Option<InsecureClientIp>,
@@ -335,57 +451,61 @@ pub async fn otel_handler(
         .map(|InsecureClientIp(addr)| addr.to_string())
         .unwrap_or_else(|| "127.0.0.1".to_string());
 
-    // Event data structure (must have "properties" key for ingestion pipeline)
-    let event_data = json!({
-        "event": "$ai_raw_data",
-        "distinct_id": &distinct_id,
-        "properties": {
-            "format": "otel_trace",
-            "data": request_to_clean_json(&request)
-        }
-    });
+    let clean_json = request_to_clean_json(&request);
+    let span_events = extract_span_events(&clean_json, &distinct_id);
 
-    let data = serde_json::to_string(&event_data).map_err(|e| {
-        warn!("Failed to serialize OTEL payload: {}", e);
-        CaptureError::NonRetryableSinkError
-    })?;
+    let processed_events: Vec<ProcessedEvent> = span_events
+        .into_iter()
+        .map(|span_event| {
+            let event_data = json!({
+                "event": &span_event.event_name,
+                "distinct_id": &span_event.distinct_id,
+                "properties": span_event.properties,
+            });
 
-    // Create a CapturedEvent for Kafka
-    let event_uuid = Uuid::now_v7();
-    let captured_event = CapturedEvent {
-        uuid: event_uuid,
-        distinct_id: distinct_id.clone(),
-        session_id: None,
-        ip: client_ip,
-        data,
-        now: received_at.to_rfc3339(),
-        sent_at: None,
-        token: token.to_string(),
-        event: "$ai_raw_data".to_string(),
-        timestamp: received_at,
-        is_cookieless_mode: false,
-        historical_migration: false,
-    };
+            let data = serde_json::to_string(&event_data).expect("SpanEvent is serializable");
 
-    let metadata = ProcessedEventMetadata {
-        data_type: DataType::AnalyticsMain,
-        session_id: None,
-        computed_timestamp: Some(received_at),
-        event_name: "$ai_raw_data".to_string(),
-        force_overflow: false,
-        skip_person_processing: false,
-        redirect_to_dlq: false,
-    };
+            let event_uuid = Uuid::now_v7();
+            let captured_event = CapturedEvent {
+                uuid: event_uuid,
+                distinct_id: span_event.distinct_id,
+                session_id: None,
+                ip: client_ip.clone(),
+                data,
+                now: received_at.to_rfc3339(),
+                sent_at: None,
+                token: token.to_string(),
+                event: span_event.event_name.clone(),
+                timestamp: span_event.timestamp.unwrap_or(received_at),
+                is_cookieless_mode: false,
+                historical_migration: false,
+            };
 
-    let processed_event = ProcessedEvent {
-        event: captured_event,
-        metadata,
-    };
+            let metadata = ProcessedEventMetadata {
+                data_type: DataType::AnalyticsMain,
+                session_id: None,
+                computed_timestamp: Some(span_event.timestamp.unwrap_or(received_at)),
+                event_name: span_event.event_name,
+                force_overflow: false,
+                skip_person_processing: false,
+                redirect_to_dlq: false,
+            };
 
-    state.sink.send(processed_event).await.map_err(|e| {
-        warn!("Failed to send OTel event to Kafka: {:?}", e);
-        e
-    })?;
+            ProcessedEvent {
+                event: captured_event,
+                metadata,
+            }
+        })
+        .collect();
+
+    state
+        .sink
+        .send_batch(processed_events)
+        .await
+        .map_err(|e| {
+            warn!("Failed to send OTel events to Kafka: {:?}", e);
+            e
+        })?;
 
     counter!("capture_otel_llma_requests_success").increment(1);
 
