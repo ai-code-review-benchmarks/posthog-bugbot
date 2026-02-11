@@ -61,3 +61,6 @@ KAFKA_COHORT_MEMBERSHIP_CHANGED_TRIGGER = f"{KAFKA_PREFIX}cohort_membership_chan
 KAFKA_DWH_CDP_RAW_TABLE = f"{KAFKA_PREFIX}cdp_data_warehouse_source_table{SUFFIX}"
 
 KAFKA_CLICKHOUSE_TOPHOG = f"{KAFKA_PREFIX}clickhouse_tophog{SUFFIX}"
+
+# Distinct ID usage - pre-processed by WarpStream pipeline from clickhouse_events_json
+KAFKA_DISTINCT_ID_USAGE_EVENTS_JSON = f"{KAFKA_PREFIX}distinct_id_usage_events_json{SUFFIX}"
