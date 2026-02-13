@@ -147,7 +147,7 @@ def get_or_create_toolbar_oauth_application(base_url: str, user: User) -> OAuthA
                 existing.save(update_fields=["redirect_uris"])
                 logger.info(
                     "toolbar_oauth_redirect_uri_appended",
-                    organization_id=user.organization_id,
+                    organization_id=user.organization.pk,
                     redirect_uri=redirect_uri,
                 )
             return existing
@@ -166,7 +166,7 @@ def get_or_create_toolbar_oauth_application(base_url: str, user: User) -> OAuthA
         )
         logger.info(
             "toolbar_oauth_application_created",
-            organization_id=user.organization_id,
+            organization_id=user.organization.pk,
             redirect_uri=redirect_uri,
         )
         return app
