@@ -306,8 +306,14 @@ def exchange_code_for_tokens(
     redirect_uri = f"{base_url}{CALLBACK_PATH}"
     # Use SITE_URL to prevent Host header manipulation from redirecting
     # the server-side token exchange to an attacker-controlled host.
-    internal_base = getattr(settings, "SITE_URL", base_url).rstrip("/") or base_url
-    token_url = f"{internal_base}/oauth/token/"
+    site_url = getattr(settings, "SITE_URL", "").rstrip("/")
+    if not site_url:
+        raise ToolbarOAuthError(
+            "token_exchange_unavailable",
+            "SITE_URL must be set for toolbar OAuth token exchange",
+            500,
+        )
+    token_url = f"{site_url}/oauth/token/"
 
     data = {
         "grant_type": "authorization_code",
