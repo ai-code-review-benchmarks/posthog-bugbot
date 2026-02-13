@@ -489,6 +489,56 @@ def _get_cohort_with_fallback(
     return seen_cohorts_cache[cohort_id]
 
 
+def _add_cohort_to_dict(
+    cohort_id: int,
+    team: Team,
+    seen_cohorts_cache: dict[int, CohortOrEmpty],
+    cohorts_dict: dict[str, Any],
+) -> None:
+    """
+    Add a cohort to the cohorts dict if it's valid and not already present.
+
+    Handles skipping already-added cohorts, looking up cohorts with fallback,
+    skipping static cohorts, and error handling for properties serialization.
+    """
+    if str(cohort_id) in cohorts_dict:
+        return
+
+    cohort = _get_cohort_with_fallback(cohort_id, team, seen_cohorts_cache)
+    if cohort and not cohort.is_static:
+        try:
+            cohorts_dict[str(cohort.pk)] = cohort.properties.to_dict()
+        except Exception:
+            logger.error(
+                "Error processing cohort properties",
+                extra={"cohort_id": cohort_id},
+                exc_info=True,
+            )
+
+
+def _get_transformed_filters_for_without_cohorts(
+    feature_flag: FeatureFlag,
+    original_filters: dict,
+    cohort_ids: list[int],
+    seen_cohorts_cache: dict[int, CohortOrEmpty],
+) -> dict:
+    """
+    Get filters for without-cohorts response, transforming single-cohort filters.
+
+    When a flag has exactly one cohort, transforms cohort filters to person
+    properties for simpler client-side evaluation.
+    """
+    if len(cohort_ids) == 1:
+        return {
+            **original_filters,
+            "groups": feature_flag.transform_cohort_filters_for_easy_evaluation(
+                using_database=DATABASE_FOR_LOCAL_EVALUATION,
+                seen_cohorts_cache=seen_cohorts_cache,
+            ),
+        }
+    return original_filters
+
+
 def _get_base_flags_queryset(team: Team) -> QuerySet[FeatureFlag]:
     """
     Return the base queryset for feature flags, excluding survey-linked flags
@@ -579,34 +629,18 @@ def _get_flags_for_local_evaluation(team: Team, include_cohorts: bool = True) ->
                 seen_cohorts_cache=seen_cohorts_cache,
             )
 
-            # transform cohort filters to be evaluated locally, but only if include_cohorts is false
-            if not include_cohorts and len(cohort_ids) == 1:
-                feature_flag.filters = {
-                    **filters,
-                    "groups": feature_flag.transform_cohort_filters_for_easy_evaluation(
-                        using_database=DATABASE_FOR_LOCAL_EVALUATION,
-                        seen_cohorts_cache=seen_cohorts_cache,
-                    ),
-                }
+            # Transform cohort filters for simple clients, or keep original filters
+            if not include_cohorts:
+                feature_flag.filters = _get_transformed_filters_for_without_cohorts(
+                    feature_flag, filters, cohort_ids, seen_cohorts_cache
+                )
             else:
                 feature_flag.filters = filters
 
             # Only build cohorts when include_cohorts is True (matching send_cohorts behavior)
             if include_cohorts:
-                for id in cohort_ids:
-                    # don't duplicate queries for already added cohorts
-                    if str(id) not in cohorts:
-                        cohort = _get_cohort_with_fallback(id, team, seen_cohorts_cache)
-                        if cohort and not cohort.is_static:
-                            try:
-                                cohorts[str(cohort.pk)] = cohort.properties.to_dict()
-                            except Exception:
-                                logger.error(
-                                    "Error processing cohort properties",
-                                    extra={"cohort_id": id},
-                                    exc_info=True,
-                                )
-                                continue
+                for cohort_id in cohort_ids:
+                    _add_cohort_to_dict(cohort_id, team, seen_cohorts_cache, cohorts)
 
         except Exception:
             logger.error("Error processing feature flag", extra={"flag_id": feature_flag.pk}, exc_info=True)
@@ -704,29 +738,13 @@ def _get_both_flags_responses_for_local_evaluation(team: Team) -> tuple[dict[str
 
             # Build cohorts dict for with-cohorts response
             for cohort_id in cohort_ids:
-                if str(cohort_id) not in cohorts_dict:
-                    cohort = _get_cohort_with_fallback(cohort_id, team, seen_cohorts_cache)
-                    if cohort and not cohort.is_static:
-                        try:
-                            cohorts_dict[str(cohort.pk)] = cohort.properties.to_dict()
-                        except Exception:
-                            logger.error(
-                                "Error processing cohort properties",
-                                extra={"cohort_id": cohort_id},
-                                exc_info=True,
-                            )
-                            continue
+                _add_cohort_to_dict(cohort_id, team, seen_cohorts_cache, cohorts_dict)
 
             # Serialize for without-cohorts response (transform filters if applicable)
             try:
-                if len(cohort_ids) == 1:
-                    feature_flag.filters = {
-                        **original_filters,
-                        "groups": feature_flag.transform_cohort_filters_for_easy_evaluation(
-                            using_database=DATABASE_FOR_LOCAL_EVALUATION,
-                            seen_cohorts_cache=seen_cohorts_cache,
-                        ),
-                    }
+                feature_flag.filters = _get_transformed_filters_for_without_cohorts(
+                    feature_flag, original_filters, cohort_ids, seen_cohorts_cache
+                )
                 flags_without_cohorts_data.append(MinimalFeatureFlagSerializer(feature_flag, context={}).data)
             finally:
                 feature_flag.filters = original_filters
